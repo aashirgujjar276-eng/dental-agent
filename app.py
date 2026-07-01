@@ -2,7 +2,7 @@ import streamlit as st
 from groq import Groq
 
 import os
-client = Groq(api_key=os.environ.get("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"))
+client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 system_prompt = """
 You are a friendly receptionist for Bright Smile Dental clinic located at 123 Oak Street, Austin, Texas.
 
