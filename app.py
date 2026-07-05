@@ -92,14 +92,15 @@ Booked At    : {appt['booked_at']}
 — Bright Smile Dental AI Receptionist
 """
     msg.attach(MIMEText(body, "plain"))
-    try:
+   try:
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(sender_email, sender_password)
         server.sendmail(sender_email, dentist_email, msg.as_string())
         server.quit()
         return True
-    except Exception:
+    except Exception as e:
+        st.error(f"Email error: {str(e)}")
         return False
 
 def save_appointment(name, date, time, service, phone="N/A", insurance="N/A"):
