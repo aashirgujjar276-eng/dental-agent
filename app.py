@@ -25,6 +25,10 @@ st.markdown("""
 html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-family: 'Inter', sans-serif; }
 [data-testid="stSidebar"] { background: linear-gradient(180deg, #0a2540 0%, #0d3b6e 100%); border-right: none; }
 [data-testid="stSidebar"] * { color: #ffffff !important; }
+[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] { background: white !important; }
+[data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] * { color: #000000 !important; }
+[data-testid="stSidebar"] .stButton button { background: rgba(255,255,255,0.15) !important; color: #ffffff !important; border: 1px solid rgba(255,255,255,0.3) !important; }
+[data-testid="stSidebar"] .stButton button * { color: #ffffff !important; }
 [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] div { color: #ffffff !important; }
 .sidebar-logo { text-align: center; padding: 24px 16px 16px; border-bottom: 1px solid rgba(255,255,255,0.2); margin-bottom: 20px; }
 .sidebar-logo h1 { font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #ffffff !important; margin: 8px 0 4px; }
@@ -299,7 +303,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown('<p style="font-size:0.78rem;color:#90caf9 !important;text-transform:uppercase;letter-spacing:1px">🌐 Language</p>', unsafe_allow_html=True)
-    selected_lang_label = st.selectbox("🌐 Select Language", list(LANGUAGES.keys()), key="lang_select")
+    selected_lang_label = st.selectbox("Select Language", list(LANGUAGES.keys()), label_visibility="collapsed", key="lang_select")
     selected_language = LANGUAGES[selected_lang_label]
     st.markdown("---")
 
@@ -333,6 +337,9 @@ if st.session_state.get("show_admin", False):
     admin_pass = st.text_input("Enter admin password:", type="password", key="admin_pw")
     if admin_pass == os.environ.get("ADMIN_PASSWORD", "admin123"):
         st.success("✅ Access granted")
+        if st.button("🏠 Go Back to Home"):
+            st.session_state["show_admin"] = False
+            st.rerun()
         all_appts = load_appointments()
         if all_appts:
             st.subheader("📋 All Appointments")
