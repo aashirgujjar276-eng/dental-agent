@@ -4,7 +4,9 @@ import json
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, date
+import gspread
+from google.oauth2.service_account import Credentials
 from groq import Groq
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
@@ -22,14 +24,18 @@ st.markdown("""
 * { box-sizing: border-box; }
 html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-family: 'Inter', sans-serif; }
 [data-testid="stSidebar"] { background: linear-gradient(180deg, #0a2540 0%, #0d3b6e 100%); border-right: none; }
-[data-testid="stSidebar"] * { color: #e8f0fe !important; }
-.sidebar-logo { text-align: center; padding: 24px 16px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px; }
+[data-testid="stSidebar"] * { color: #ffffff !important; }
+[data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] div { color: #ffffff !important; }
+.sidebar-logo { text-align: center; padding: 24px 16px 16px; border-bottom: 1px solid rgba(255,255,255,0.2); margin-bottom: 20px; }
 .sidebar-logo h1 { font-family: 'Playfair Display', serif; font-size: 1.5rem; color: #ffffff !important; margin: 8px 0 4px; }
 .sidebar-logo p { font-size: 0.75rem; color: #90caf9 !important; margin: 0; }
-.info-card { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.12); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.info-card { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
 .info-card h4 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; color: #90caf9 !important; margin: 0 0 8px; }
-.info-card p { font-size: 0.82rem; margin: 3px 0; color: #e8f0fe !important; }
-.service-pill { display: inline-block; background: rgba(33,150,243,0.2); border: 1px solid rgba(33,150,243,0.4); border-radius: 20px; padding: 3px 10px; font-size: 0.75rem; margin: 3px 2px; color: #90caf9 !important; }
+.info-card p { font-size: 0.82rem; margin: 3px 0; color: #ffffff !important; }
+.service-pill { display: inline-block; background: rgba(33,150,243,0.3); border: 1px solid rgba(33,150,243,0.5); border-radius: 20px; padding: 3px 10px; font-size: 0.75rem; margin: 3px 2px; color: #ffffff !important; }
+.appt-card-sidebar { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); border-radius: 10px; padding: 12px; margin-bottom: 8px; }
+.appt-card-sidebar h4 { color: #ffffff !important; margin: 0 0 6px; font-size: 0.85rem; }
+.appt-card-sidebar p { color: #e0e0e0 !important; margin: 2px 0; font-size: 0.78rem; }
 .main-header { background: linear-gradient(135deg, #0a2540 0%, #1565c0 100%); padding: 28px 36px; border-radius: 16px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 8px 32px rgba(10,37,64,0.18); }
 .main-header-left h1 { font-family: 'Playfair Display', serif; color: #ffffff; font-size: 2rem; margin: 0 0 4px; }
 .main-header-left p { color: #90caf9; font-size: 0.9rem; margin: 0; }
@@ -41,6 +47,9 @@ html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-famil
 .metric-box { flex: 1; background: white; border: 1px solid #e3e8ef; border-radius: 12px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
 .metric-box .num { font-size: 1.8rem; font-weight: 700; color: #0a2540; }
 .metric-box .lbl { font-size: 0.72rem; color: #78909c; text-transform: uppercase; letter-spacing: 0.5px; }
+.receipt { background: white; border: 2px solid #0a2540; border-radius: 12px; padding: 24px; margin-top: 12px; }
+.receipt h3 { color: #0a2540; border-bottom: 1px solid #e3e8ef; padding-bottom: 8px; margin-bottom: 12px; }
+.receipt p { color: #333; margin: 4px 0; font-size: 0.85rem; }
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
 </style>
@@ -60,6 +69,9 @@ LANGUAGES = {
 }
 
 APPT_FILE = "appointments.json"
+CLOSED_DAYS = ["Sunday"]
+HOURS = {"Monday": (8,18), "Tuesday": (8,18), "Wednesday": (8,18),
+          "Thursday": (8,18), "Friday": (8,18), "Saturday": (9,14)}
 
 def load_appointments():
     if os.path.exists(APPT_FILE):
@@ -67,20 +79,27 @@ def load_appointments():
             return json.load(f)
     return []
 
+def check_double_booking(date_str, time_str):
+    appts = load_appointments()
+    for a in appts:
+        if a.get("date","").lower() == date_str.lower() and a.get("time","").lower() == time_str.lower():
+            return True
+    return False
+
 def send_email_notification(appt):
     sender_email = os.environ.get("SENDER_EMAIL")
     sender_password = os.environ.get("SENDER_PASSWORD")
     dentist_email = os.environ.get("DENTIST_EMAIL")
     if not all([sender_email, sender_password, dentist_email]):
         return False
-    msg = MIMEMultipart()
-    msg["From"] = sender_email
-    msg["To"] = dentist_email
-    msg["Subject"] = f"🦷 New Appointment — {appt['name']}"
-    body = f"""
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = dentist_email
+        msg["Subject"] = f"🦷 New Appointment — {appt['name']}"
+        body = f"""
 New appointment booked through AI Receptionist
 ===============================================
-
 Patient Name : {appt['name']}
 Date         : {appt['date']}
 Time         : {appt['time']}
@@ -88,11 +107,10 @@ Service      : {appt['service']}
 Phone        : {appt['phone']}
 Insurance    : {appt['insurance']}
 Booked At    : {appt['booked_at']}
-
+Receipt ID   : BSDA-{appt['id']:04d}
 — Bright Smile Dental AI Receptionist
 """
-    msg.attach(MIMEText(body, "plain"))
-    try:
+        msg.attach(MIMEText(body, "plain"))
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(sender_email, sender_password)
@@ -100,16 +118,40 @@ Booked At    : {appt['booked_at']}
         server.quit()
         return True
     except Exception as e:
-        st.error(f"Email error: {str(e)}")
+        st.warning(f"Email note: {str(e)}")
         return False
 
-def save_appointment(name, date, time, service, phone="N/A", insurance="N/A"):
+def save_to_sheets(appt):
+    try:
+        creds_json = os.environ.get("GOOGLE_SHEETS_CREDS")
+        sheet_id = os.environ.get("GOOGLE_SHEET_ID")
+        if not creds_json or not sheet_id:
+            return False
+        import json as json_module
+        creds_dict = json_module.loads(creds_json)
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(sheet_id)
+        ws = sh.sheet1
+        if ws.row_count < 2 or ws.cell(1,1).value != "ID":
+            ws.update('A1:I1', [["ID","Name","Date","Time","Service","Phone","Insurance","Booked At","Status"]])
+        ws.append_row([
+            appt['id'], appt['name'], appt['date'], appt['time'],
+            appt['service'], appt['phone'], appt['insurance'],
+            appt['booked_at'], appt['status']
+        ])
+        return True
+    except Exception:
+        return False
+
+def save_appointment(name, date_str, time_str, service, phone="N/A", insurance="N/A"):
     appts = load_appointments()
     appt = {
         "id": len(appts) + 1,
         "name": name,
-        "date": date,
-        "time": time,
+        "date": date_str,
+        "time": time_str,
         "service": service,
         "phone": phone,
         "insurance": insurance,
@@ -120,7 +162,33 @@ def save_appointment(name, date, time, service, phone="N/A", insurance="N/A"):
     with open(APPT_FILE, "w") as f:
         json.dump(appts, f, indent=2)
     send_email_notification(appt)
+    save_to_sheets(appt)
     return appt
+
+def generate_receipt(appt):
+    return f"""
+BRIGHT SMILE DENTAL
+123 Oak Street, Austin, Texas 78701
+Phone: (512) 555-0198
+=====================================
+APPOINTMENT RECEIPT
+Receipt ID : BSDA-{appt['id']:04d}
+=====================================
+Patient    : {appt['name']}
+Date       : {appt['date']}
+Time       : {appt['time']}
+Service    : {appt['service']}
+Phone      : {appt['phone']}
+Insurance  : {appt['insurance']}
+Booked At  : {appt['booked_at']}
+Status     : CONFIRMED
+=====================================
+Please arrive 15 minutes early.
+Bring your insurance card and ID.
+Cancellation: 24hrs notice required.
+Thank you for choosing Bright Smile!
+=====================================
+"""
 
 def get_system_prompt(language):
     return f"""You are a warm, professional AI receptionist for Bright Smile Dental clinic in Austin, Texas.
@@ -135,7 +203,7 @@ Emergency: (512) 555-0199
 HOURS:
 - Monday-Friday: 8:00 AM - 6:00 PM
 - Saturday: 9:00 AM - 2:00 PM
-- Sunday: Closed
+- Sunday: CLOSED
 
 DOCTORS:
 - Dr. Sarah Mitchell - General Dentist (15 yrs experience)
@@ -155,45 +223,39 @@ SERVICES & PRICES:
 - Dental Crown: $900-$1,500
 - Dental Bridge: $1,200-$2,500
 - Dentures (full): $1,500-$3,500
-- Invisalign / Braces Consultation: FREE
+- Invisalign Consultation: FREE
 - Invisalign Treatment: $3,000-$6,000
-- Emergency Dental Visit: $150 (exam fee)
+- Emergency Dental Visit: $150
 - X-Rays (full set): $150
 - Pediatric Exam & Cleaning: $90
 - Fluoride Treatment: $35
 - Dental Sealants: $40 per tooth
 
 INSURANCE ACCEPTED:
-Delta Dental, Cigna, Aetna, BlueCross BlueShield, United Healthcare, Humana, Guardian, MetLife, Medicaid (limited), Medicare Advantage (select plans)
+Delta Dental, Cigna, Aetna, BlueCross BlueShield, United Healthcare, Humana, Guardian, MetLife, Medicaid (limited)
 
 PAYMENT OPTIONS:
-Cash, all major credit/debit cards, CareCredit financing (0% interest plans available), payment plans for treatments over $500
+Cash, all major credit/debit cards, CareCredit financing (0% interest), payment plans for treatments over $500
 
 CANCELLATION POLICY:
-- Cancel at least 24 hours before appointment to avoid fees
+- Cancel at least 24 hours before appointment
 - Late cancellation fee: $50
 - No-show fee: $75
 
 GENERAL:
-- New patients welcome - please arrive 15 min early for paperwork
-- Walk-ins accepted but appointments strongly preferred
-- Emergency same-day appointments available - call (512) 555-0199
-- Free parking in our private lot
-- Wheelchair accessible
-- Kid-friendly environment with toys and TV in waiting area
-- WiFi available in waiting area
+- New patients welcome - arrive 15 min early
+- Walk-ins accepted but appointments preferred
+- Emergency same-day appointments available
+- Free parking, wheelchair accessible, kid-friendly, WiFi
 
-APPOINTMENT BOOKING:
-When a patient wants to book, collect ALL of these one by one:
-1. Full name
-2. Preferred date (day and month)
-3. Preferred time
-4. Service needed
-5. Phone number
-6. Insurance provider (or "self-pay")
-
-Before confirming, repeat all details back and ask patient to confirm they are correct.
-Once patient confirms, end your message with this EXACT block:
+APPOINTMENT BOOKING RULES:
+- Clinic is CLOSED on Sundays - never book Sunday appointments
+- Saturday hours end at 2:00 PM - no bookings after that
+- Do not book appointments in the past
+- If a date/time is unavailable due to double booking, suggest alternatives
+- Collect: full name, date, time, service, phone number, insurance
+- Confirm all details with patient before finalizing
+- Once confirmed, end message with EXACT block:
 
 [APPOINTMENT_BOOKED]
 Name: <name>
@@ -205,18 +267,17 @@ Insurance: <insurance>
 [/APPOINTMENT_BOOKED]
 
 EMERGENCY GUIDANCE:
-- Severe toothache: Advise to call (512) 555-0199 immediately
-- Knocked-out tooth: Keep tooth moist, call emergency line NOW
-- Broken tooth: Rinse mouth, apply cold compress, call us
-- Lost filling/crown: Temporary dental cement from pharmacy, call us
+- Severe toothache: call (512) 555-0199 immediately
+- Knocked-out tooth: keep moist, call emergency line NOW
+- Broken tooth: rinse, cold compress, call us
+- Lost filling/crown: temporary cement from pharmacy, call us
 
 PERSONALITY:
-Be warm, empathetic, and reassuring. Use the patient's name once you know it.
-Occasionally use relevant emojis but not excessively.
-Keep answers concise but complete. Never make up information.
+Warm, empathetic, professional. Use patient name once known.
+Emojis occasionally. Concise but complete. Never make up info.
 """
 
-# Sidebar
+# ── Sidebar ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("""
     <div class="sidebar-logo">
@@ -227,9 +288,9 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="info-card"><h4>📍 Location</h4><p>123 Oak Street</p><p>Austin, Texas 78701</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="info-card"><h4>🕐 Hours</h4><p>Mon-Fri: 8am - 6pm</p><p>Saturday: 9am - 2pm</p><p>Sunday: Closed</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-card"><h4>🕐 Hours</h4><p>Mon-Fri: 8am - 6pm</p><p>Saturday: 9am - 2pm</p><p style="color:#ff6b6b !important">Sunday: Closed</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="info-card"><h4>📞 Contact</h4><p>Main: (512) 555-0198</p><p>Emergency: (512) 555-0199</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="info-card"><h4>🩺 Our Doctors</h4><p>Dr. Sarah Mitchell – General</p><p>Dr. James Patel – Orthodontist</p><p>Dr. Emily Nguyen – Pediatric</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-card"><h4>🩺 Doctors</h4><p>Dr. Sarah Mitchell – General</p><p>Dr. James Patel – Orthodontist</p><p>Dr. Emily Nguyen – Pediatric</p></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="info-card"><h4>✅ Insurance</h4>', unsafe_allow_html=True)
     for ins in ["Delta Dental", "Cigna", "Aetna", "BlueCross", "United", "Humana", "Medicaid"]:
@@ -237,33 +298,59 @@ with st.sidebar:
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown('<p style="font-size:0.78rem;color:#90caf9;text-transform:uppercase;letter-spacing:1px">🌐 Language</p>', unsafe_allow_html=True)
-    selected_lang_label = st.selectbox("", list(LANGUAGES.keys()), label_visibility="collapsed")
+    st.markdown('<p style="font-size:0.78rem;color:#90caf9 !important;text-transform:uppercase;letter-spacing:1px">🌐 Language</p>', unsafe_allow_html=True)
+    selected_lang_label = st.selectbox("Select Language", list(LANGUAGES.keys()), label_visibility="collapsed", key="lang_select")
     selected_language = LANGUAGES[selected_lang_label]
     st.markdown("---")
 
-    st.markdown("**📋 Appointments Today**")
+    st.markdown('<p style="color:#ffffff !important;font-weight:600">📋 Appointments Today</p>', unsafe_allow_html=True)
     appts = load_appointments()
     today = datetime.now().strftime("%Y-%m-%d")
     today_appts = [a for a in appts if today in str(a.get("booked_at", ""))]
     if today_appts:
         for a in today_appts[-3:]:
             st.markdown(f"""
-            <div class="appt-card">
+            <div class="appt-card-sidebar">
                 <h4>✅ {a['name']}</h4>
                 <p>📅 {a['date']} at {a['time']}</p>
                 <p>🦷 {a['service']}</p>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.markdown('<p style="font-size:0.8rem;color:#90caf9">No appointments booked yet today.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="font-size:0.8rem;color:#90caf9 !important">No appointments today yet.</p>', unsafe_allow_html=True)
 
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.session_state.booking_done = False
+        st.session_state.pop("trigger_response", None)
         st.rerun()
 
-# Main area
+# ── Admin Dashboard ───────────────────────────────────────────────────────────
+if st.sidebar.button("🔐 Admin Dashboard", use_container_width=True):
+    st.session_state["show_admin"] = not st.session_state.get("show_admin", False)
+
+if st.session_state.get("show_admin", False):
+    admin_pass = st.text_input("Enter admin password:", type="password", key="admin_pw")
+    if admin_pass == os.environ.get("ADMIN_PASSWORD", "admin123"):
+        st.success("✅ Access granted")
+        all_appts = load_appointments()
+        if all_appts:
+            st.subheader("📋 All Appointments")
+            import pandas as pd
+            df = pd.DataFrame(all_appts)
+            st.dataframe(df, use_container_width=True)
+            csv = df.to_csv(index=False)
+            st.download_button("⬇️ Download CSV", csv, "appointments.csv", "text/csv")
+        else:
+            st.info("No appointments yet.")
+        st.stop()
+    elif admin_pass:
+        st.error("Wrong password")
+        st.stop()
+    else:
+        st.stop()
+
+# ── Main area ─────────────────────────────────────────────────────────────────
 st.markdown(f"""
 <div class="main-header">
     <div class="main-header-left">
@@ -289,11 +376,10 @@ cols = st.columns(5)
 quick_questions = ["📅 Book Appointment", "💰 View Prices", "🏥 Insurance Info", "🚨 Emergency", "🕐 Opening Hours"]
 for i, q in enumerate(quick_questions):
     with cols[i]:
-        if st.button(q, use_container_width=True):
+        if st.button(q, use_container_width=True, key=f"quick_{i}"):
             if "messages" not in st.session_state:
                 st.session_state.messages = []
             clean_q = q.split(" ", 1)[1] if " " in q else q
-            st.session_state.messages.append({"role": "user", "content": clean_q})
             st.session_state["trigger_response"] = clean_q
             st.rerun()
 
@@ -303,12 +389,18 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "booking_done" not in st.session_state:
     st.session_state.booking_done = False
+if "last_appt" not in st.session_state:
+    st.session_state.last_appt = None
 
 if not st.session_state.messages:
     welcome = {
         "English": "Hello! Welcome to Bright Smile Dental! 😊 I'm your virtual receptionist, available 24/7. I can help you **book appointments**, answer questions about **services and pricing**, **insurance**, or handle **dental emergencies**. How can I assist you today?",
         "Spanish": "¡Hola! ¡Bienvenido a Bright Smile Dental! 😊 Soy su recepcionista virtual, disponible 24/7. ¿En qué puedo ayudarle hoy?",
-        "Urdu": "السلام علیکم! برائٹ اسمائل ڈینٹل میں خوش آمدید! 😊 میں آپ کی ورچوئل ریسپشنسٹ ہوں، 24/7 دستیاب ہوں۔ آج میں آپ کی کیسے مدد کر سکتی ہوں؟",
+        "French": "Bonjour! Bienvenue chez Bright Smile Dental! 😊 Je suis votre réceptionniste virtuelle. Comment puis-je vous aider?",
+        "Urdu": "السلام علیکم! برائٹ اسمائل ڈینٹل میں خوش آمدید! 😊 میں آپ کی ورچوئل ریسپشنسٹ ہوں۔ آج میں آپ کی کیسے مدد کر سکتی ہوں؟",
+        "Arabic": "مرحباً! أهلاً بكم في عيادة برايت سمايل للأسنان! 😊 أنا موظفة الاستقبال الافتراضية، متاحة على مدار الساعة. كيف يمكنني مساعدتك؟",
+        "German": "Hallo! Willkommen bei Bright Smile Dental! 😊 Ich bin Ihre virtuelle Empfangsdame. Wie kann ich Ihnen helfen?",
+        "Chinese": "您好！欢迎来到Bright Smile牙科诊所！😊 我是您的虚拟接待员，24/7为您服务。今天我能为您做什么？",
     }
     msg = welcome.get(selected_language, welcome["English"])
     st.session_state.messages.append({"role": "assistant", "content": msg})
@@ -320,32 +412,42 @@ for message in st.session_state.messages:
     else:
         content = message["content"]
         display_content = content
+        booked_details = {}
         if "[APPOINTMENT_BOOKED]" in content:
             parts = content.split("[APPOINTMENT_BOOKED]")
             display_content = parts[0].strip()
             try:
                 block = parts[1].split("[/APPOINTMENT_BOOKED]")[0].strip()
-                details = {}
                 for line in block.strip().split("\n"):
                     if ":" in line:
                         k, v = line.split(":", 1)
-                        details[k.strip()] = v.strip()
+                        booked_details[k.strip()] = v.strip()
             except Exception:
-                details = {}
+                pass
         with st.chat_message("assistant", avatar="🦷"):
             st.markdown(display_content)
-            if "[APPOINTMENT_BOOKED]" in content and details:
+            if booked_details:
                 st.markdown(f"""
                 <div class="appt-card">
                     <h4>✅ Appointment Confirmed! Email sent to clinic.</h4>
-                    <p>👤 <b>Patient:</b> {details.get('Name','—')}</p>
-                    <p>📅 <b>Date:</b> {details.get('Date','—')}</p>
-                    <p>🕐 <b>Time:</b> {details.get('Time','—')}</p>
-                    <p>🦷 <b>Service:</b> {details.get('Service','—')}</p>
-                    <p>📞 <b>Phone:</b> {details.get('Phone','—')}</p>
-                    <p>🏥 <b>Insurance:</b> {details.get('Insurance','—')}</p>
+                    <p>👤 <b>Patient:</b> {booked_details.get('Name','—')}</p>
+                    <p>📅 <b>Date:</b> {booked_details.get('Date','—')}</p>
+                    <p>🕐 <b>Time:</b> {booked_details.get('Time','—')}</p>
+                    <p>🦷 <b>Service:</b> {booked_details.get('Service','—')}</p>
+                    <p>📞 <b>Phone:</b> {booked_details.get('Phone','—')}</p>
+                    <p>🏥 <b>Insurance:</b> {booked_details.get('Insurance','—')}</p>
                 </div>
                 """, unsafe_allow_html=True)
+
+if st.session_state.last_appt:
+    receipt_text = generate_receipt(st.session_state.last_appt)
+    st.download_button(
+        label="⬇️ Download Appointment Receipt",
+        data=receipt_text,
+        file_name=f"receipt_BSDA_{st.session_state.last_appt['id']:04d}.txt",
+        mime="text/plain",
+        key="receipt_dl"
+    )
 
 user_input = st.chat_input("Type your message here... 💬")
 if not user_input and st.session_state.get("trigger_response"):
@@ -353,7 +455,11 @@ if not user_input and st.session_state.get("trigger_response"):
 
 if user_input:
     st.session_state.booking_done = False
-    st.session_state.messages.append({"role": "user", "content": user_input})
+
+    if not any(m["content"] == user_input and m["role"] == "user"
+               for m in st.session_state.messages[-2:]):
+        st.session_state.messages.append({"role": "user", "content": user_input})
+
     with st.chat_message("user", avatar="👤"):
         st.markdown(user_input)
 
@@ -378,20 +484,30 @@ if user_input:
                     if ":" in line:
                         k, v = line.split(":", 1)
                         booked_details[k.strip()] = v.strip()
-                saved = save_appointment(
-                    booked_details.get("Name", "Unknown"),
-                    booked_details.get("Date", "TBD"),
-                    booked_details.get("Time", "TBD"),
-                    booked_details.get("Service", "General"),
-                    booked_details.get("Phone", "N/A"),
-                    booked_details.get("Insurance", "N/A")
+
+                double_booked = check_double_booking(
+                    booked_details.get("Date",""),
+                    booked_details.get("Time","")
                 )
-                st.session_state.booking_done = True
+                if double_booked:
+                    display_reply += "\n\n⚠️ Sorry, that time slot is already taken. Please choose a different time."
+                    booked_details = {}
+                else:
+                    saved = save_appointment(
+                        booked_details.get("Name", "Unknown"),
+                        booked_details.get("Date", "TBD"),
+                        booked_details.get("Time", "TBD"),
+                        booked_details.get("Service", "General"),
+                        booked_details.get("Phone", "N/A"),
+                        booked_details.get("Insurance", "N/A")
+                    )
+                    st.session_state.last_appt = saved
+                    st.session_state.booking_done = True
             except Exception:
                 pass
 
         st.markdown(display_reply)
-        if booked_details:
+        if booked_details and not check_double_booking(booked_details.get("Date",""), booked_details.get("Time","")):
             st.markdown(f"""
             <div class="appt-card">
                 <h4>✅ Appointment Confirmed! Email sent to clinic.</h4>
