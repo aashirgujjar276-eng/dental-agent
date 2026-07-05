@@ -523,7 +523,7 @@ if user_input:
     with st.chat_message("assistant", avatar="🦷"):
         with st.spinner(""):
             response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 max_tokens=1200,
                 messages=[{"role": "system", "content": get_system_prompt(selected_language)}]
                 + [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
