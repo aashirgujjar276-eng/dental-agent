@@ -1,2 +1,5 @@
 groq
 streamlit
+gspread
+google-auth
+pandas
