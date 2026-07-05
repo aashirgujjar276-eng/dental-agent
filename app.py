@@ -291,7 +291,9 @@ for i, q in enumerate(quick_questions):
         if st.button(q, use_container_width=True):
             if "messages" not in st.session_state:
                 st.session_state.messages = []
-            st.session_state.messages.append({"role": "user", "content": q})
+            clean_q = q.split(" ", 1)[1] if " " in q else q
+            st.session_state.messages.append({"role": "user", "content": clean_q})
+            st.session_state["trigger_response"] = clean_q
             st.rerun()
 
 st.markdown("---")
@@ -345,6 +347,8 @@ for message in st.session_state.messages:
                 """, unsafe_allow_html=True)
 
 user_input = st.chat_input("Type your message here... 💬")
+if not user_input and st.session_state.get("trigger_response"):
+    user_input = st.session_state.pop("trigger_response")
 
 if user_input:
     st.session_state.booking_done = False
