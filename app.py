@@ -299,7 +299,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown('<p style="font-size:0.78rem;color:#90caf9 !important;text-transform:uppercase;letter-spacing:1px">🌐 Language</p>', unsafe_allow_html=True)
-    selected_lang_label = st.selectbox("Select Language", list(LANGUAGES.keys()), label_visibility="collapsed", key="lang_select")
+    selected_lang_label = st.selectbox("🌐 Select Language", list(LANGUAGES.keys()), key="lang_select")
     selected_language = LANGUAGES[selected_lang_label]
     st.markdown("---")
 
