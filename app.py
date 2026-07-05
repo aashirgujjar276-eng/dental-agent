@@ -92,7 +92,7 @@ Booked At    : {appt['booked_at']}
 — Bright Smile Dental AI Receptionist
 """
     msg.attach(MIMEText(body, "plain"))
-   try:
+    try:
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(sender_email, sender_password)
