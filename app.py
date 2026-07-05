@@ -138,13 +138,63 @@ def save_to_sheets(appt):
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(sheet_id)
         ws = sh.sheet1
-        if ws.row_count < 2 or ws.cell(1,1).value != "ID":
-            ws.update('A1:I1', [["ID","Name","Date","Time","Service","Phone","Insurance","Booked At","Status"]])
+
+        # Setup headers if first time
+        if ws.cell(1,1).value != "ID":
+            headers = ["ID","Patient Name","Date","Time","Service","Phone","Insurance","Booked At","Status"]
+            ws.update('A1:I1', [headers])
+
+            # Format header row - blue background white text bold
+            ws.format('A1:I1', {
+                "backgroundColor": {"red": 0.04, "green": 0.15, "blue": 0.25},
+                "textFormat": {
+                    "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                    "bold": True,
+                    "fontSize": 11
+                },
+                "horizontalAlignment": "CENTER"
+            })
+
+            # Set column widths
+            requests = {
+                "requests": [
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 50}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2}, "properties": {"pixelSize": 160}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3}, "properties": {"pixelSize": 120}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 3, "endIndex": 4}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 4, "endIndex": 5}, "properties": {"pixelSize": 180}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 5, "endIndex": 6}, "properties": {"pixelSize": 130}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 6, "endIndex": 7}, "properties": {"pixelSize": 150}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 8}, "properties": {"pixelSize": 160}, "fields": "pixelSize"}},
+                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 8, "endIndex": 9}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},
+                ]
+            }
+            sh.batch_update(requests)
+
+        # Add data row
+        row_num = len(ws.get_all_values()) + 1
         ws.append_row([
             appt['id'], appt['name'], appt['date'], appt['time'],
             appt['service'], appt['phone'], appt['insurance'],
             appt['booked_at'], appt['status']
         ])
+
+        # Alternate row colors for readability
+        if row_num % 2 == 0:
+            ws.format(f'A{row_num}:I{row_num}', {
+                "backgroundColor": {"red": 0.9, "green": 0.95, "blue": 1.0}
+            })
+        else:
+            ws.format(f'A{row_num}:I{row_num}', {
+                "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}
+            })
+
+        # Format status cell green
+        ws.format(f'I{row_num}', {
+            "backgroundColor": {"red": 0.7, "green": 0.95, "blue": 0.7},
+            "textFormat": {"bold": True, "foregroundColor": {"red": 0, "green": 0.4, "blue": 0}}
+        })
+
         return True
     except Exception:
         return False
@@ -473,7 +523,7 @@ if user_input:
     with st.chat_message("assistant", avatar="🦷"):
         with st.spinner(""):
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="llama-3.3-70b-versatile",
                 max_tokens=1200,
                 messages=[{"role": "system", "content": get_system_prompt(selected_language)}]
                 + [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
