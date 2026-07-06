@@ -475,13 +475,22 @@ with st.sidebar:
     today_appts = [a for a in appts if today in str(a.get("booked_at", ""))]
     if today_appts:
         for a in today_appts[-3:]:
-            st.markdown(f"""
-            <div class="appt-card-sidebar">
-                <h4>✅ {a['name']}</h4>
-                <p>📅 {a['date']} at {a['time']}</p>
-                <p>🦷 {a['service']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            if a.get("status","") == "Cancelled":
+                st.markdown(f"""
+                <div style="background:rgba(255,100,100,0.2);border:1px solid rgba(255,100,100,0.4);border-radius:10px;padding:12px;margin-bottom:8px">
+                    <h4 style="color:#ff6b6b !important;margin:0 0 6px;font-size:0.85rem">❌ {a['name']} (Cancelled)</h4>
+                    <p style="color:#ffaaaa !important;margin:2px 0;font-size:0.78rem">📅 {a['date']} at {a['time']}</p>
+                    <p style="color:#ffaaaa !important;margin:2px 0;font-size:0.78rem">🦷 {a['service']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="appt-card-sidebar">
+                    <h4>✅ {a['name']}</h4>
+                    <p>📅 {a['date']} at {a['time']}</p>
+                    <p>🦷 {a['service']}</p>
+                </div>
+                """, unsafe_allow_html=True)
     else:
         st.markdown('<p style="font-size:0.8rem;color:#90caf9 !important">No appointments today yet.</p>', unsafe_allow_html=True)
 
@@ -531,9 +540,10 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 all_appts = load_appointments()
+confirmed_appts = [a for a in all_appts if a.get("status","") != "Cancelled"]
 st.markdown(f"""
 <div class="metric-row">
-    <div class="metric-box"><div class="num">{len(all_appts)}</div><div class="lbl">Total Bookings</div></div>
+    <div class="metric-box"><div class="num">{len(confirmed_appts)}</div><div class="lbl">Total Bookings</div></div>
     <div class="metric-box"><div class="num">24/7</div><div class="lbl">Availability</div></div>
     <div class="metric-box"><div class="num">10</div><div class="lbl">Languages</div></div>
     <div class="metric-box"><div class="num">3</div><div class="lbl">Doctors</div></div>
@@ -560,6 +570,8 @@ if "booking_done" not in st.session_state:
     st.session_state.booking_done = False
 if "last_appt" not in st.session_state:
     st.session_state.last_appt = None
+if "last_cancelled" not in st.session_state:
+    st.session_state.last_cancelled = None
 
 if not st.session_state.messages:
     welcome = {
@@ -593,6 +605,18 @@ for message in st.session_state.messages:
                         booked_details[k.strip()] = v.strip()
             except Exception:
                 pass
+        # Parse cancellation from history too
+        cancelled_hist = {}
+        if "[APPOINTMENT_CANCELLED]" in content:
+            try:
+                cblock = content.split("[APPOINTMENT_CANCELLED]")[1].split("[/APPOINTMENT_CANCELLED]")[0].strip()
+                for line in cblock.strip().split("\n"):
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        cancelled_hist[k.strip()] = v.strip()
+            except Exception:
+                pass
+
         with st.chat_message("assistant", avatar="🦷"):
             st.markdown(display_content)
             if booked_details:
@@ -607,8 +631,18 @@ for message in st.session_state.messages:
                     <p>🏥 <b>Insurance:</b> {booked_details.get('Insurance','—')}</p>
                 </div>
                 """, unsafe_allow_html=True)
+            if cancelled_hist:
+                st.markdown(f"""
+                <div style="background:#fff0f0;border:2px solid #ef9a9a;border-radius:12px;padding:16px;margin-top:12px">
+                    <h4 style="color:#c62828;margin:0 0 8px;font-size:1rem">❌ Appointment Cancelled</h4>
+                    <p style="color:#b71c1c;margin:3px 0">👤 <b>Patient:</b> {cancelled_hist.get('Name','—')}</p>
+                    <p style="color:#b71c1c;margin:3px 0">📅 <b>Date:</b> {cancelled_hist.get('Date','—')}</p>
+                    <p style="color:#b71c1c;margin:3px 0">📧 Cancellation email sent to clinic</p>
+                    <p style="color:#b71c1c;margin:3px 0">📊 Google Sheet updated to Cancelled</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-if st.session_state.last_appt:
+if st.session_state.get("last_appt") and not st.session_state.get("last_cancelled"):
     receipt_text = generate_receipt(st.session_state.last_appt)
     st.download_button(
         label="⬇️ Download Appointment Receipt",
@@ -617,6 +651,31 @@ if st.session_state.last_appt:
         mime="text/plain",
         key="receipt_dl"
     )
+elif st.session_state.get("last_cancelled"):
+    cancel_receipt = f"""
+BRIGHT SMILE DENTAL
+123 Oak Street, Austin, Texas 78701
+Phone: (512) 555-0198
+=====================================
+CANCELLATION RECEIPT
+=====================================
+Patient    : {st.session_state.last_cancelled.get('name','—')}
+Date       : {st.session_state.last_cancelled.get('date','—')}
+Cancelled  : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+Status     : CANCELLED
+=====================================
+Late cancellation fee may apply ($50).
+To rebook call: (512) 555-0198
+Thank you for letting us know.
+=====================================
+"""
+    st.download_button(
+        label="⬇️ Download Cancellation Receipt",
+        data=cancel_receipt,
+        file_name="cancellation_receipt.txt",
+        mime="text/plain",
+        key="cancel_receipt_dl"
+    )
 
 user_input = st.chat_input("Type your message here... 💬")
 if not user_input and st.session_state.get("trigger_response"):
@@ -624,6 +683,7 @@ if not user_input and st.session_state.get("trigger_response"):
 
 if user_input:
     st.session_state.booking_done = False
+    st.session_state.last_cancelled = None
 
     if not any(m["content"] == user_input and m["role"] == "user"
                for m in st.session_state.messages[-2:]):
@@ -635,7 +695,7 @@ if user_input:
     with st.chat_message("assistant", avatar="🦷"):
         with st.spinner(""):
             response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="llama-3.1-8b-instant",
                 max_tokens=1200,
                 messages=[{"role": "system", "content": get_system_prompt(selected_language)}]
                 + [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
@@ -692,6 +752,11 @@ if user_input:
                 )
                 if success:
                     st.session_state.booking_done = False
+                    st.session_state.last_appt = None
+                    st.session_state.last_cancelled = {
+                        "name": cancelled_details.get("Name","—"),
+                        "date": cancelled_details.get("Date","—")
+                    }
             except Exception:
                 pass
 
