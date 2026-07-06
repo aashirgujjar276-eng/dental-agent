@@ -56,6 +56,24 @@ html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-famil
 .receipt p { color: #333; margin: 4px 0; font-size: 0.85rem; }
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    [data-testid="stAppViewContainer"] { background: #1a1a2e !important; }
+    .main-header { background: linear-gradient(135deg, #0a2540 0%, #1565c0 100%) !important; }
+    .metric-box { background: #16213e !important; border-color: #0f3460 !important; }
+    .metric-box .num { color: #e0e0e0 !important; }
+    .metric-box .lbl { color: #90caf9 !important; }
+    .appt-card { background: #16213e !important; border-color: #0f3460 !important; }
+    .appt-card h4 { color: #90caf9 !important; }
+    .appt-card p { color: #e0e0e0 !important; }
+    .receipt { background: #16213e !important; border-color: #0f3460 !important; }
+    .receipt h3 { color: #90caf9 !important; }
+    .receipt p { color: #e0e0e0 !important; }
+    [data-testid="stChatMessage"] { background: #16213e !important; }
+    .stChatInputContainer { background: #16213e !important; border-color: #0f3460 !important; }
+    p, span, div, h1, h2, h3, h4 { color: #e0e0e0; }
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -244,6 +262,85 @@ Thank you for choosing Bright Smile!
 =====================================
 """
 
+
+def cancel_appointment(name, date_str):
+    appts = load_appointments()
+    cancelled = False
+    for a in appts:
+        if a.get("name","").lower() == name.lower() and a.get("date","").lower() == date_str.lower():
+            a["status"] = "Cancelled"
+            cancelled = True
+            # Send cancellation email
+            send_cancellation_email(a)
+            # Update sheets
+            update_sheet_cancelled(a)
+            break
+    if cancelled:
+        with open(APPT_FILE, "w") as f:
+            json.dump(appts, f, indent=2)
+    return cancelled
+
+def send_cancellation_email(appt):
+    sender_email = os.environ.get("SENDER_EMAIL")
+    sender_password = os.environ.get("SENDER_PASSWORD")
+    dentist_email = os.environ.get("DENTIST_EMAIL")
+    if not all([sender_email, sender_password, dentist_email]):
+        return False
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = sender_email
+        msg["To"] = dentist_email
+        msg["Subject"] = f"❌ Appointment Cancelled — {appt['name']}"
+        body = f"""
+Appointment Cancellation Notice
+================================
+Patient Name : {appt['name']}
+Date         : {appt['date']}
+Time         : {appt['time']}
+Service      : {appt['service']}
+Phone        : {appt['phone']}
+Cancelled At : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+— Bright Smile Dental AI Receptionist
+"""
+        msg.attach(MIMEText(body, "plain"))
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, dentist_email, msg.as_string())
+        server.quit()
+        return True
+    except Exception:
+        return False
+
+def update_sheet_cancelled(appt):
+    try:
+        creds_json = os.environ.get("GOOGLE_SHEETS_CREDS")
+        sheet_id = os.environ.get("GOOGLE_SHEET_ID")
+        if not creds_json or not sheet_id:
+            return False
+        import json as json_module
+        creds_dict = json_module.loads(creds_json)
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(sheet_id)
+        ws = sh.sheet1
+        # Find the row and update status to Cancelled with red color
+        cell = ws.find(appt['name'])
+        if cell:
+            row = cell.row
+            ws.update_cell(row, 9, "Cancelled")
+            ws.format(f'I{row}', {
+                "backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7},
+                "textFormat": {"bold": True, "foregroundColor": {"red": 0.6, "green": 0, "blue": 0}}
+            })
+            ws.format(f'A{row}:H{row}', {
+                "backgroundColor": {"red": 1.0, "green": 0.9, "blue": 0.9}
+            })
+        return True
+    except Exception:
+        return False
+
 def get_system_prompt(language):
     return f"""You are a warm, professional AI receptionist for Bright Smile Dental clinic in Austin, Texas.
 Always respond in {language}. If the user writes in a different language, still reply in {language}.
@@ -308,8 +405,10 @@ APPOINTMENT BOOKING RULES:
 - Do not book appointments in the past
 - If a date/time is unavailable due to double booking, suggest alternatives
 - Collect: full name, date, time, service, phone number, insurance
-- Confirm all details with patient before finalizing
-- Once confirmed, end message with EXACT block:
+- After collecting ALL 6 details, summarize them and ask patient "Is all this information correct? Please reply YES to confirm or NO to make changes."
+- ONLY after patient replies YES, output the booking block
+- If patient says NO, ask what they want to change
+- Once patient confirms with YES, end message with EXACT block:
 
 [APPOINTMENT_BOOKED]
 Name: <name>
@@ -319,6 +418,19 @@ Service: <service>
 Phone: <phone>
 Insurance: <insurance>
 [/APPOINTMENT_BOOKED]
+
+APPOINTMENT CANCELLATION:
+- If patient wants to cancel, ask for their full name and appointment date
+- Look up their appointment and confirm details before cancelling
+- Once confirmed, output this EXACT block:
+
+[APPOINTMENT_CANCELLED]
+Name: <name>
+Date: <date>
+[/APPOINTMENT_CANCELLED]
+
+- After cancellation inform patient of $50 late cancellation fee if less than 24hrs notice
+- Be empathetic and offer to rebook for another time
 
 EMERGENCY GUIDANCE:
 - Severe toothache: call (512) 555-0199 immediately
@@ -523,7 +635,7 @@ if user_input:
     with st.chat_message("assistant", avatar="🦷"):
         with st.spinner(""):
             response = client.chat.completions.create(
-                model="llama-3.1-8b-instant",
+                model="llama-3.3-70b-versatile",
                 max_tokens=1200,
                 messages=[{"role": "system", "content": get_system_prompt(selected_language)}]
                 + [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages]
@@ -532,6 +644,8 @@ if user_input:
 
         display_reply = reply
         booked_details = {}
+        cancelled_details = {}
+
         if "[APPOINTMENT_BOOKED]" in reply:
             parts = reply.split("[APPOINTMENT_BOOKED]")
             display_reply = parts[0].strip()
@@ -563,6 +677,24 @@ if user_input:
             except Exception:
                 pass
 
+        elif "[APPOINTMENT_CANCELLED]" in reply:
+            parts = reply.split("[APPOINTMENT_CANCELLED]")
+            display_reply = parts[0].strip()
+            try:
+                block = parts[1].split("[/APPOINTMENT_CANCELLED]")[0].strip()
+                for line in block.strip().split("\n"):
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        cancelled_details[k.strip()] = v.strip()
+                success = cancel_appointment(
+                    cancelled_details.get("Name", ""),
+                    cancelled_details.get("Date", "")
+                )
+                if success:
+                    st.session_state.booking_done = False
+            except Exception:
+                pass
+
         st.markdown(display_reply)
         if booked_details and not check_double_booking(booked_details.get("Date",""), booked_details.get("Time","")):
             st.markdown(f"""
@@ -574,6 +706,16 @@ if user_input:
                 <p>🦷 <b>Service:</b> {booked_details.get('Service','—')}</p>
                 <p>📞 <b>Phone:</b> {booked_details.get('Phone','—')}</p>
                 <p>🏥 <b>Insurance:</b> {booked_details.get('Insurance','—')}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        if cancelled_details:
+            st.markdown(f"""
+            <div style="background:#fff0f0;border:1px solid #ffcdd2;border-radius:12px;padding:16px;margin-top:12px">
+                <h4 style="color:#c62828;margin:0 0 8px">❌ Appointment Cancelled</h4>
+                <p style="color:#b71c1c;margin:3px 0">👤 <b>Patient:</b> {cancelled_details.get('Name','—')}</p>
+                <p style="color:#b71c1c;margin:3px 0">📅 <b>Date:</b> {cancelled_details.get('Date','—')}</p>
+                <p style="color:#b71c1c;margin:3px 0">📧 Cancellation email sent to clinic</p>
+                <p style="color:#b71c1c;margin:3px 0">📊 Google Sheet updated</p>
             </div>
             """, unsafe_allow_html=True)
 
