@@ -56,7 +56,6 @@ html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-famil
 .receipt p { color: #333; margin: 4px 0; font-size: 0.85rem; }
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
-/* Dark mode support */
 @media (prefers-color-scheme: dark) {
     [data-testid="stAppViewContainer"] { background: #1a1a2e !important; }
     .main-header { background: linear-gradient(135deg, #0a2540 0%, #1565c0 100%) !important; }
@@ -73,7 +72,6 @@ footer { visibility: hidden; }
     .stChatInputContainer { background: #16213e !important; border-color: #0f3460 !important; }
     p, span, div, h1, h2, h3, h4 { color: #e0e0e0; }
 }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -91,9 +89,6 @@ LANGUAGES = {
 }
 
 APPT_FILE = "appointments.json"
-CLOSED_DAYS = ["Sunday"]
-HOURS = {"Monday": (8,18), "Tuesday": (8,18), "Wednesday": (8,18),
-          "Thursday": (8,18), "Friday": (8,18), "Saturday": (9,14)}
 
 def load_appointments():
     if os.path.exists(APPT_FILE):
@@ -104,7 +99,7 @@ def load_appointments():
 def check_double_booking(date_str, time_str):
     appts = load_appointments()
     for a in appts:
-        if a.get("date","").lower() == date_str.lower() and a.get("time","").lower() == time_str.lower():
+        if a.get("status","") != "Cancelled" and a.get("date","").lower() == date_str.lower() and a.get("time","").lower() == time_str.lower():
             return True
     return False
 
@@ -143,143 +138,6 @@ Receipt ID   : BSDA-{appt['id']:04d}
         st.warning(f"Email note: {str(e)}")
         return False
 
-def save_to_sheets(appt):
-    try:
-        creds_json = os.environ.get("GOOGLE_SHEETS_CREDS")
-        sheet_id = os.environ.get("GOOGLE_SHEET_ID")
-        if not creds_json or not sheet_id:
-            return False
-        import json as json_module
-        creds_dict = json_module.loads(creds_json)
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-        gc = gspread.authorize(creds)
-        sh = gc.open_by_key(sheet_id)
-        ws = sh.sheet1
-
-        # Setup headers if first time
-        if ws.cell(1,1).value != "ID":
-            headers = ["ID","Patient Name","Date","Time","Service","Phone","Insurance","Booked At","Status"]
-            ws.update('A1:I1', [headers])
-
-            # Format header row - blue background white text bold
-            ws.format('A1:I1', {
-                "backgroundColor": {"red": 0.04, "green": 0.15, "blue": 0.25},
-                "textFormat": {
-                    "foregroundColor": {"red": 1, "green": 1, "blue": 1},
-                    "bold": True,
-                    "fontSize": 11
-                },
-                "horizontalAlignment": "CENTER"
-            })
-
-            # Set column widths
-            requests = {
-                "requests": [
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 0, "endIndex": 1}, "properties": {"pixelSize": 50}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2}, "properties": {"pixelSize": 160}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 2, "endIndex": 3}, "properties": {"pixelSize": 120}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 3, "endIndex": 4}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 4, "endIndex": 5}, "properties": {"pixelSize": 180}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 5, "endIndex": 6}, "properties": {"pixelSize": 130}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 6, "endIndex": 7}, "properties": {"pixelSize": 150}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 7, "endIndex": 8}, "properties": {"pixelSize": 160}, "fields": "pixelSize"}},
-                    {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 8, "endIndex": 9}, "properties": {"pixelSize": 100}, "fields": "pixelSize"}},
-                ]
-            }
-            sh.batch_update(requests)
-
-        # Add data row
-        row_num = len(ws.get_all_values()) + 1
-        ws.append_row([
-            appt['id'], appt['name'], appt['date'], appt['time'],
-            appt['service'], appt['phone'], appt['insurance'],
-            appt['booked_at'], appt['status']
-        ])
-
-        # Alternate row colors for readability
-        if row_num % 2 == 0:
-            ws.format(f'A{row_num}:I{row_num}', {
-                "backgroundColor": {"red": 0.9, "green": 0.95, "blue": 1.0}
-            })
-        else:
-            ws.format(f'A{row_num}:I{row_num}', {
-                "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}
-            })
-
-        # Format status cell green
-        ws.format(f'I{row_num}', {
-            "backgroundColor": {"red": 0.7, "green": 0.95, "blue": 0.7},
-            "textFormat": {"bold": True, "foregroundColor": {"red": 0, "green": 0.4, "blue": 0}}
-        })
-
-        return True
-    except Exception:
-        return False
-
-def save_appointment(name, date_str, time_str, service, phone="N/A", insurance="N/A"):
-    appts = load_appointments()
-    appt = {
-        "id": len(appts) + 1,
-        "name": name,
-        "date": date_str,
-        "time": time_str,
-        "service": service,
-        "phone": phone,
-        "insurance": insurance,
-        "booked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "status": "Confirmed"
-    }
-    appts.append(appt)
-    with open(APPT_FILE, "w") as f:
-        json.dump(appts, f, indent=2)
-    send_email_notification(appt)
-    save_to_sheets(appt)
-    return appt
-
-def generate_receipt(appt):
-    return f"""
-BRIGHT SMILE DENTAL
-123 Oak Street, Austin, Texas 78701
-Phone: (512) 555-0198
-=====================================
-APPOINTMENT RECEIPT
-Receipt ID : BSDA-{appt['id']:04d}
-=====================================
-Patient    : {appt['name']}
-Date       : {appt['date']}
-Time       : {appt['time']}
-Service    : {appt['service']}
-Phone      : {appt['phone']}
-Insurance  : {appt['insurance']}
-Booked At  : {appt['booked_at']}
-Status     : CONFIRMED
-=====================================
-Please arrive 15 minutes early.
-Bring your insurance card and ID.
-Cancellation: 24hrs notice required.
-Thank you for choosing Bright Smile!
-=====================================
-"""
-
-
-def cancel_appointment(name, date_str):
-    appts = load_appointments()
-    cancelled = False
-    for a in appts:
-        if a.get("name","").lower() == name.lower() and a.get("date","").lower() == date_str.lower():
-            a["status"] = "Cancelled"
-            cancelled = True
-            # Send cancellation email
-            send_cancellation_email(a)
-            # Update sheets
-            update_sheet_cancelled(a)
-            break
-    if cancelled:
-        with open(APPT_FILE, "w") as f:
-            json.dump(appts, f, indent=2)
-    return cancelled
-
 def send_cancellation_email(appt):
     sender_email = os.environ.get("SENDER_EMAIL")
     sender_password = os.environ.get("SENDER_PASSWORD")
@@ -312,6 +170,41 @@ Cancelled At : {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
     except Exception:
         return False
 
+def save_to_sheets(appt):
+    try:
+        creds_json = os.environ.get("GOOGLE_SHEETS_CREDS")
+        sheet_id = os.environ.get("GOOGLE_SHEET_ID")
+        if not creds_json or not sheet_id:
+            return False
+        import json as json_module
+        creds_dict = json_module.loads(creds_json)
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        gc = gspread.authorize(creds)
+        sh = gc.open_by_key(sheet_id)
+        ws = sh.sheet1
+        if ws.cell(1,1).value != "ID":
+            headers = ["ID","Patient Name","Date","Time","Service","Phone","Insurance","Booked At","Status"]
+            ws.update('A1:I1', [headers])
+            ws.format('A1:I1', {
+                "backgroundColor": {"red": 0.04, "green": 0.15, "blue": 0.25},
+                "textFormat": {"foregroundColor": {"red": 1, "green": 1, "blue": 1}, "bold": True, "fontSize": 11},
+                "horizontalAlignment": "CENTER"
+            })
+            requests = {"requests": [
+                {"updateDimensionProperties": {"range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": i, "endIndex": i+1}, "properties": {"pixelSize": s}, "fields": "pixelSize"}}
+                for i, s in enumerate([50,160,120,100,180,130,150,160,100])
+            ]}
+            sh.batch_update(requests)
+        row_num = len(ws.get_all_values()) + 1
+        ws.append_row([appt['id'], appt['name'], appt['date'], appt['time'], appt['service'], appt['phone'], appt['insurance'], appt['booked_at'], appt['status']])
+        if row_num % 2 == 0:
+            ws.format(f'A{row_num}:I{row_num}', {"backgroundColor": {"red": 0.9, "green": 0.95, "blue": 1.0}})
+        ws.format(f'I{row_num}', {"backgroundColor": {"red": 0.7, "green": 0.95, "blue": 0.7}, "textFormat": {"bold": True, "foregroundColor": {"red": 0, "green": 0.4, "blue": 0}}})
+        return True
+    except Exception:
+        return False
+
 def update_sheet_cancelled(appt):
     try:
         creds_json = os.environ.get("GOOGLE_SHEETS_CREDS")
@@ -325,21 +218,77 @@ def update_sheet_cancelled(appt):
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(sheet_id)
         ws = sh.sheet1
-        # Find the row and update status to Cancelled with red color
         cell = ws.find(appt['name'])
         if cell:
             row = cell.row
             ws.update_cell(row, 9, "Cancelled")
-            ws.format(f'I{row}', {
-                "backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7},
-                "textFormat": {"bold": True, "foregroundColor": {"red": 0.6, "green": 0, "blue": 0}}
-            })
-            ws.format(f'A{row}:H{row}', {
-                "backgroundColor": {"red": 1.0, "green": 0.9, "blue": 0.9}
-            })
+            ws.format(f'I{row}', {"backgroundColor": {"red": 1.0, "green": 0.7, "blue": 0.7}, "textFormat": {"bold": True, "foregroundColor": {"red": 0.6, "green": 0, "blue": 0}}})
+            ws.format(f'A{row}:H{row}', {"backgroundColor": {"red": 1.0, "green": 0.9, "blue": 0.9}})
         return True
     except Exception:
         return False
+
+def save_appointment(name, date_str, time_str, service, phone="N/A", insurance="N/A"):
+    appts = load_appointments()
+    appt = {
+        "id": len(appts) + 1,
+        "name": name,
+        "date": date_str,
+        "time": time_str,
+        "service": service,
+        "phone": phone,
+        "insurance": insurance,
+        "booked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "Confirmed"
+    }
+    appts.append(appt)
+    with open(APPT_FILE, "w") as f:
+        json.dump(appts, f, indent=2)
+    send_email_notification(appt)
+    save_to_sheets(appt)
+    return appt
+
+def cancel_appointment(name, date_str):
+    appts = load_appointments()
+    cancelled = False
+    cancelled_appt = None
+    for a in appts:
+        if a.get("name","").lower() == name.lower() and a.get("status","") != "Cancelled":
+            a["status"] = "Cancelled"
+            cancelled = True
+            cancelled_appt = a
+            break
+    if cancelled and cancelled_appt:
+        with open(APPT_FILE, "w") as f:
+            json.dump(appts, f, indent=2)
+        send_cancellation_email(cancelled_appt)
+        update_sheet_cancelled(cancelled_appt)
+    return cancelled
+
+def generate_receipt(appt):
+    return f"""
+BRIGHT SMILE DENTAL
+123 Oak Street, Austin, Texas 78701
+Phone: (512) 555-0198
+=====================================
+APPOINTMENT RECEIPT
+Receipt ID : BSDA-{appt['id']:04d}
+=====================================
+Patient    : {appt['name']}
+Date       : {appt['date']}
+Time       : {appt['time']}
+Service    : {appt['service']}
+Phone      : {appt['phone']}
+Insurance  : {appt['insurance']}
+Booked At  : {appt['booked_at']}
+Status     : CONFIRMED
+=====================================
+Please arrive 15 minutes early.
+Bring your insurance card and ID.
+Cancellation: 24hrs notice required.
+Thank you for choosing Bright Smile!
+=====================================
+"""
 
 def get_system_prompt(language):
     return f"""You are a warm, professional AI receptionist for Bright Smile Dental clinic in Austin, Texas.
@@ -420,9 +369,9 @@ Insurance: <insurance>
 [/APPOINTMENT_BOOKED]
 
 APPOINTMENT CANCELLATION:
-- If patient wants to cancel, ask for their full name and appointment date
-- Look up their appointment and confirm details before cancelling
-- Once confirmed, output this EXACT block:
+- If patient wants to cancel, ask for their full name
+- Confirm the cancellation with patient before proceeding
+- Once patient confirms, output this EXACT block:
 
 [APPOINTMENT_CANCELLED]
 Name: <name>
@@ -443,7 +392,7 @@ Warm, empathetic, professional. Use patient name once known.
 Emojis occasionally. Concise but complete. Never make up info.
 """
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
+# Sidebar
 with st.sidebar:
     st.markdown("""
     <div class="sidebar-logo">
@@ -497,10 +446,12 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat", use_container_width=True):
         st.session_state.messages = []
         st.session_state.booking_done = False
+        st.session_state.last_appt = None
+        st.session_state.last_cancelled = None
         st.session_state.pop("trigger_response", None)
         st.rerun()
 
-# ── Admin Dashboard ───────────────────────────────────────────────────────────
+# Admin Dashboard
 if st.sidebar.button("🔐 Admin Dashboard", use_container_width=True):
     st.session_state["show_admin"] = not st.session_state.get("show_admin", False)
 
@@ -528,7 +479,7 @@ if st.session_state.get("show_admin", False):
     else:
         st.stop()
 
-# ── Main area ─────────────────────────────────────────────────────────────────
+# Main area
 st.markdown(f"""
 <div class="main-header">
     <div class="main-header-left">
@@ -594,6 +545,8 @@ for message in st.session_state.messages:
         content = message["content"]
         display_content = content
         booked_details = {}
+        cancelled_hist = {}
+
         if "[APPOINTMENT_BOOKED]" in content:
             parts = content.split("[APPOINTMENT_BOOKED]")
             display_content = parts[0].strip()
@@ -605,9 +558,9 @@ for message in st.session_state.messages:
                         booked_details[k.strip()] = v.strip()
             except Exception:
                 pass
-        # Parse cancellation from history too
-        cancelled_hist = {}
+
         if "[APPOINTMENT_CANCELLED]" in content:
+            display_content = content.split("[APPOINTMENT_CANCELLED]")[0].strip()
             try:
                 cblock = content.split("[APPOINTMENT_CANCELLED]")[1].split("[/APPOINTMENT_CANCELLED]")[0].strip()
                 for line in cblock.strip().split("\n"):
@@ -715,11 +668,7 @@ if user_input:
                     if ":" in line:
                         k, v = line.split(":", 1)
                         booked_details[k.strip()] = v.strip()
-
-                double_booked = check_double_booking(
-                    booked_details.get("Date",""),
-                    booked_details.get("Time","")
-                )
+                double_booked = check_double_booking(booked_details.get("Date",""), booked_details.get("Time",""))
                 if double_booked:
                     display_reply += "\n\n⚠️ Sorry, that time slot is already taken. Please choose a different time."
                     booked_details = {}
@@ -775,12 +724,12 @@ if user_input:
             """, unsafe_allow_html=True)
         if cancelled_details:
             st.markdown(f"""
-            <div style="background:#fff0f0;border:1px solid #ffcdd2;border-radius:12px;padding:16px;margin-top:12px">
-                <h4 style="color:#c62828;margin:0 0 8px">❌ Appointment Cancelled</h4>
+            <div style="background:#fff0f0;border:2px solid #ef9a9a;border-radius:12px;padding:16px;margin-top:12px">
+                <h4 style="color:#c62828;margin:0 0 8px;font-size:1rem">❌ Appointment Cancelled</h4>
                 <p style="color:#b71c1c;margin:3px 0">👤 <b>Patient:</b> {cancelled_details.get('Name','—')}</p>
                 <p style="color:#b71c1c;margin:3px 0">📅 <b>Date:</b> {cancelled_details.get('Date','—')}</p>
                 <p style="color:#b71c1c;margin:3px 0">📧 Cancellation email sent to clinic</p>
-                <p style="color:#b71c1c;margin:3px 0">📊 Google Sheet updated</p>
+                <p style="color:#b71c1c;margin:3px 0">📊 Google Sheet updated to Cancelled</p>
             </div>
             """, unsafe_allow_html=True)
 
