@@ -56,6 +56,34 @@ html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-famil
 .receipt p { color: #333; margin: 4px 0; font-size: 0.85rem; }
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
+
+.voice-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    margin-bottom: 8px;
+}
+.voice-btn {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #1565c0, #0a2540);
+    border: none;
+    cursor: pointer;
+    font-size: 22px;
+    transition: all 0.3s;
+    box-shadow: 0 4px 15px rgba(21,101,192,0.4);
+}
+.voice-btn:hover { transform: scale(1.12); box-shadow: 0 6px 20px rgba(21,101,192,0.6); }
+.voice-btn.listening { background: linear-gradient(135deg,#c62828,#b71c1c); animation: pulse 1s infinite; }
+.voice-status { font-size: 0.85rem; color: #1565c0; font-weight: 500; }
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(198,40,40,0.5); }
+    70% { box-shadow: 0 0 0 12px rgba(198,40,40,0); }
+    100% { box-shadow: 0 0 0 0 rgba(198,40,40,0); }
+}
+
 @media (prefers-color-scheme: dark) {
     [data-testid="stAppViewContainer"] { background: #1a1a2e !important; }
     .main-header { background: linear-gradient(135deg, #0a2540 0%, #1565c0 100%) !important; }
@@ -630,7 +658,39 @@ Thank you for letting us know.
         key="cancel_receipt_dl"
     )
 
-user_input = st.chat_input("Type your message here... 💬")
+
+st.markdown('''
+<div class="voice-container">
+    <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="Click to speak">🎤</button>
+    <span class="voice-status" id="voiceStatus">Click mic to speak or type below</span>
+    <span style="font-size:0.8rem;color:#888888;margin-left:auto">🔊 Auto-speak on</span>
+</div>
+<script>
+let recognition=null,isListening=false,synthesis=window.speechSynthesis;
+function initRecog(){
+    if(!("webkitSpeechRecognition"in window||"SpeechRecognition"in window))return false;
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    recognition=new SR();
+    recognition.continuous=false;recognition.interimResults=false;recognition.lang="en-US";
+    recognition.onstart=()=>{isListening=true;document.getElementById("voiceBtn").classList.add("listening");document.getElementById("voiceBtn").innerHTML="⏹";document.getElementById("voiceStatus").textContent="Listening... speak now";};
+    recognition.onresult=(e)=>{
+        const t=e.results[0][0].transcript;
+        document.getElementById("voiceStatus").textContent="You said: "+t;
+        const inp=document.querySelector('[data-testid="stChatInput"] textarea');
+        if(inp){const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value").set;s.call(inp,t);inp.dispatchEvent(new Event("input",{bubbles:true}));setTimeout(()=>{const b=document.querySelector('[data-testid="stChatInput"] button');if(b)b.click();},600);}
+    };
+    recognition.onend=()=>{isListening=false;document.getElementById("voiceBtn").classList.remove("listening");document.getElementById("voiceBtn").innerHTML="🎤";setTimeout(()=>{document.getElementById("voiceStatus").textContent="Click mic to speak";},3000);};
+    recognition.onerror=(e)=>{isListening=false;document.getElementById("voiceBtn").classList.remove("listening");document.getElementById("voiceBtn").innerHTML="🎤";document.getElementById("voiceStatus").textContent="Error: "+e.error+". Use Chrome.";};
+    return true;
+}
+function toggleVoice(){if(!recognition&&!initRecog()){document.getElementById("voiceStatus").textContent="Not supported. Use Chrome.";return;}isListening?recognition.stop():recognition.start();}
+function speakText(t){if(synthesis){synthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=1.0;u.pitch=1.0;const v=synthesis.getVoices();const pv=v.find(x=>x.name.includes("Samantha")||x.name.includes("Google US English")||x.name.includes("Microsoft Zira")||(x.lang==="en-US"&&x.localService));if(pv)u.voice=pv;synthesis.speak(u);}}
+function watchMsgs(){const obs=new MutationObserver(m=>{m.forEach(mu=>{mu.addedNodes.forEach(n=>{if(n.nodeType===1){const msgs=n.querySelectorAll("[data-testid=stChatMessage]");msgs.forEach(msg=>{const av=msg.querySelector("[data-testid=chatAvatarIcon-assistant]");if(av){const tx=msg.querySelector("p");if(tx&&tx.textContent)speakText(tx.textContent);}});}});});});const c=document.querySelector("[data-testid=stVerticalBlock]");if(c)obs.observe(c,{childList:true,subtree:true});}
+window.addEventListener("load",()=>{initRecog();setTimeout(watchMsgs,2000);});
+</script>
+''', unsafe_allow_html=True)
+
+user_input = st.chat_input("Type your message here or use mic above... 💬")
 if not user_input and st.session_state.get("trigger_response"):
     user_input = st.session_state.pop("trigger_response")
 
