@@ -659,38 +659,148 @@ Thank you for letting us know.
     )
 
 
-st.markdown('''
-<div class="voice-container">
-    <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="Click to speak">🎤</button>
-    <span class="voice-status" id="voiceStatus">Click mic to speak or type below</span>
-    <span style="font-size:0.8rem;color:#888888;margin-left:auto">🔊 Auto-speak on</span>
+# Voice component using streamlit components for proper mic access
+import streamlit.components.v1 as components
+
+voice_result = components.html(
+    """
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+body { margin:0; padding:8px; font-family:'Inter',sans-serif; background:transparent; }
+.voice-row { display:flex; align-items:center; gap:12px; }
+.mic-btn {
+    width:52px; height:52px; border-radius:50%;
+    background:linear-gradient(135deg,#1565c0,#0a2540);
+    border:none; cursor:pointer; font-size:22px;
+    box-shadow:0 4px 15px rgba(21,101,192,0.4);
+    transition:all 0.3s; color:white;
+}
+.mic-btn:hover { transform:scale(1.1); }
+.mic-btn.listening { background:linear-gradient(135deg,#c62828,#b71c1c); animation:pulse 1s infinite; }
+.status { font-size:0.85rem; color:#1565c0; font-weight:500; }
+.transcript-box {
+    margin-top:10px; padding:10px 14px;
+    background:#e8f0fe; border-radius:10px;
+    border:1px solid #c5d8fb; display:none;
+    font-size:0.9rem; color:#0a2540;
+}
+@keyframes pulse {
+    0%{box-shadow:0 0 0 0 rgba(198,40,40,0.5);}
+    70%{box-shadow:0 0 0 12px rgba(198,40,40,0);}
+    100%{box-shadow:0 0 0 0 rgba(198,40,40,0);}
+}
+</style>
+</head>
+<body>
+<div class="voice-row">
+    <button class="mic-btn" id="micBtn" onclick="toggleMic()">🎤</button>
+    <div>
+        <div class="status" id="status">Click mic to speak</div>
+        <div style="font-size:0.75rem;color:#888">Works on Chrome and Edge</div>
+    </div>
 </div>
+<div class="transcript-box" id="transcriptBox"></div>
 <script>
-let recognition=null,isListening=false,synthesis=window.speechSynthesis;
-function initRecog(){
-    if(!("webkitSpeechRecognition"in window||"SpeechRecognition"in window))return false;
-    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-    recognition=new SR();
-    recognition.continuous=false;recognition.interimResults=false;recognition.lang="en-US";
-    recognition.onstart=()=>{isListening=true;document.getElementById("voiceBtn").classList.add("listening");document.getElementById("voiceBtn").innerHTML="⏹";document.getElementById("voiceStatus").textContent="Listening... speak now";};
-    recognition.onresult=(e)=>{
-        const t=e.results[0][0].transcript;
-        document.getElementById("voiceStatus").textContent="You said: "+t;
-        const inp=document.querySelector('[data-testid="stChatInput"] textarea');
-        if(inp){const s=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value").set;s.call(inp,t);inp.dispatchEvent(new Event("input",{bubbles:true}));setTimeout(()=>{const b=document.querySelector('[data-testid="stChatInput"] button');if(b)b.click();},600);}
+let recog = null;
+let listening = false;
+
+function initRecog() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+        document.getElementById('status').textContent = 'Not supported. Use Chrome.';
+        document.getElementById('status').style.color = '#c62828';
+        return false;
+    }
+    recog = new SR();
+    recog.continuous = false;
+    recog.interimResults = true;
+    recog.lang = 'en-US';
+
+    recog.onstart = () => {
+        listening = true;
+        document.getElementById('micBtn').classList.add('listening');
+        document.getElementById('micBtn').innerHTML = '⏹️';
+        document.getElementById('status').textContent = 'Listening... speak now 🔴';
+        document.getElementById('transcriptBox').style.display = 'none';
     };
-    recognition.onend=()=>{isListening=false;document.getElementById("voiceBtn").classList.remove("listening");document.getElementById("voiceBtn").innerHTML="🎤";setTimeout(()=>{document.getElementById("voiceStatus").textContent="Click mic to speak";},3000);};
-    recognition.onerror=(e)=>{isListening=false;document.getElementById("voiceBtn").classList.remove("listening");document.getElementById("voiceBtn").innerHTML="🎤";document.getElementById("voiceStatus").textContent="Error: "+e.error+". Use Chrome.";};
+
+    recog.onresult = (e) => {
+        let interim = '';
+        let final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            if (e.results[i].isFinal) {
+                final += e.results[i][0].transcript;
+            } else {
+                interim += e.results[i][0].transcript;
+            }
+        }
+        const display = final || interim;
+        document.getElementById('transcriptBox').style.display = 'block';
+        document.getElementById('transcriptBox').textContent = '🗣️ ' + display;
+
+        if (final) {
+            document.getElementById('status').textContent = 'Got it! Sending...';
+            window.parent.postMessage({
+                type: 'voice_transcript',
+                transcript: final.trim()
+            }, '*');
+        }
+    };
+
+    recog.onend = () => {
+        listening = false;
+        document.getElementById('micBtn').classList.remove('listening');
+        document.getElementById('micBtn').innerHTML = '🎤';
+        setTimeout(() => {
+            document.getElementById('status').textContent = 'Click mic to speak';
+        }, 2000);
+    };
+
+    recog.onerror = (e) => {
+        listening = false;
+        document.getElementById('micBtn').classList.remove('listening');
+        document.getElementById('micBtn').innerHTML = '🎤';
+        let msg = 'Error: ' + e.error;
+        if (e.error === 'not-allowed') msg = 'Mic blocked. Allow microphone in browser.';
+        if (e.error === 'network') msg = 'Network error. Check connection.';
+        document.getElementById('status').textContent = msg;
+        document.getElementById('status').style.color = '#c62828';
+    };
     return true;
 }
-function toggleVoice(){if(!recognition&&!initRecog()){document.getElementById("voiceStatus").textContent="Not supported. Use Chrome.";return;}isListening?recognition.stop():recognition.start();}
-function speakText(t){if(synthesis){synthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.rate=1.0;u.pitch=1.0;const v=synthesis.getVoices();const pv=v.find(x=>x.name.includes("Samantha")||x.name.includes("Google US English")||x.name.includes("Microsoft Zira")||(x.lang==="en-US"&&x.localService));if(pv)u.voice=pv;synthesis.speak(u);}}
-function watchMsgs(){const obs=new MutationObserver(m=>{m.forEach(mu=>{mu.addedNodes.forEach(n=>{if(n.nodeType===1){const msgs=n.querySelectorAll("[data-testid=stChatMessage]");msgs.forEach(msg=>{const av=msg.querySelector("[data-testid=chatAvatarIcon-assistant]");if(av){const tx=msg.querySelector("p");if(tx&&tx.textContent)speakText(tx.textContent);}});}});});});const c=document.querySelector("[data-testid=stVerticalBlock]");if(c)obs.observe(c,{childList:true,subtree:true});}
-window.addEventListener("load",()=>{initRecog();setTimeout(watchMsgs,2000);});
+
+function toggleMic() {
+    if (!recog && !initRecog()) return;
+    if (listening) {
+        recog.stop();
+    } else {
+        document.getElementById('status').style.color = '#1565c0';
+        recog.start();
+    }
+}
 </script>
-''', unsafe_allow_html=True)
+</body>
+</html>
+    """,
+    height=100,
+)
+
+# Handle voice transcript
+if voice_result:
+    import json
+    try:
+        data = json.loads(voice_result) if isinstance(voice_result, str) else voice_result
+        if data and isinstance(data, dict) and data.get('transcript'):
+            st.session_state['voice_input'] = data['transcript']
+    except Exception:
+        pass
 
 user_input = st.chat_input("Type your message here or use mic above... 💬")
+# Check for voice input
+if not user_input and st.session_state.get("voice_input"):
+    user_input = st.session_state.pop("voice_input")
 if not user_input and st.session_state.get("trigger_response"):
     user_input = st.session_state.pop("trigger_response")
 
