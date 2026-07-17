@@ -659,221 +659,105 @@ Thank you for letting us know.
     )
 
 
-# Voice input using query params trick
+# Voice input - simple and reliable approach
 import streamlit.components.v1 as components
 
-# Check for voice transcript from URL param
-params = st.query_params
-voice_transcript = params.get("voice", "")
-if voice_transcript and voice_transcript != st.session_state.get("last_voice", ""):
-    st.session_state["last_voice"] = voice_transcript
-    st.session_state["voice_input"] = voice_transcript
-    st.query_params.clear()
+# Initialize voice state
+if "voice_text" not in st.session_state:
+    st.session_state.voice_text = ""
 
-# Inject mic button styled to appear next to chat input
-st.markdown("""
+# Voice component
+voice_html = """
+<!DOCTYPE html>
+<html>
+<head>
 <style>
-/* Hide default chat input area and replace with custom */
-.stChatInputContainer {
-    position: relative;
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:transparent; font-family:Inter,sans-serif; }
+.wrap {
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:6px 0;
 }
-.mic-float {
-    position: fixed;
-    bottom: 22px;
-    right: 80px;
-    z-index: 99999;
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #1565c0, #0a2540);
-    border: none;
-    cursor: pointer;
-    font-size: 18px;
-    color: white;
-    box-shadow: 0 4px 15px rgba(21,101,192,0.5);
-    transition: all 0.3s;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.mbtn {
+    width:44px; height:44px;
+    border-radius:50%;
+    background:linear-gradient(135deg,#1565c0,#0a2540);
+    border:2px solid rgba(255,255,255,0.2);
+    cursor:pointer;
+    font-size:20px;
+    color:white;
+    transition:all 0.2s;
+    flex-shrink:0;
 }
-.mic-float:hover { transform: scale(1.1); background: linear-gradient(135deg,#1976d2,#1565c0); }
-.mic-float.listening { background: linear-gradient(135deg,#c62828,#b71c1c) !important; animation: mpulse 1s infinite; }
-.voice-toast {
-    position: fixed;
-    bottom: 80px;
-    right: 20px;
-    background: #0a2540;
-    color: white;
-    padding: 10px 16px;
-    border-radius: 12px;
-    font-size: 0.85rem;
-    z-index: 99999;
-    display: none;
-    max-width: 300px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+.mbtn:hover { transform:scale(1.08); }
+.mbtn.on { background:linear-gradient(135deg,#c62828,#b71c1c); animation:p 1s infinite; }
+.info { font-size:0.82rem; color:#1565c0; font-weight:500; }
+.sub { font-size:0.72rem; color:#888; margin-top:2px; }
+.result {
+    margin-top:6px;
+    padding:8px 12px;
+    background:#e8f0fe;
+    border-radius:8px;
+    border:1px solid #c5d8fb;
+    font-size:0.88rem;
+    color:#0a2540;
+    display:none;
 }
-@keyframes mpulse {
-    0%{box-shadow:0 0 0 0 rgba(198,40,40,0.6);}
-    70%{box-shadow:0 0 0 14px rgba(198,40,40,0);}
-    100%{box-shadow:0 0 0 0 rgba(198,40,40,0);}
-}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(198,40,40,0.5)}70%{box-shadow:0 0 0 10px rgba(198,40,40,0)}100%{box-shadow:0 0 0 0 rgba(198,40,40,0)}}
 </style>
-
-<button class="mic-float" id="micFloat" onclick="toggleMicFloat()" title="Click to speak">🎤</button>
-<div class="voice-toast" id="voiceToast">Click mic and speak your question</div>
+</head>
+<body>
+<div class="wrap">
+    <button class="mbtn" id="mb" onclick="go()">🎤</button>
+    <div>
+        <div class="info" id="inf">Click mic to speak</div>
+        <div class="sub">Chrome recommended</div>
+    </div>
+</div>
+<div class="result" id="res"></div>
 
 <script>
-let rf = null, lf = false, synthF = window.speechSynthesis;
-
-function showToast(msg, color) {
-    const t = document.getElementById('voiceToast');
-    t.textContent = msg;
-    t.style.display = 'block';
-    t.style.background = color || '#0a2540';
-    clearTimeout(window._toastTimer);
-    window._toastTimer = setTimeout(() => { t.style.display = 'none'; }, 4000);
-}
-
-function initMicFloat() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { showToast('Voice not supported. Use Chrome.', '#c62828'); return false; }
-    rf = new SR();
-    rf.continuous = false;
-    rf.interimResults = true;
-    rf.lang = 'en-US';
-
-    rf.onstart = () => {
-        lf = true;
-        document.getElementById('micFloat').classList.add('listening');
-        document.getElementById('micFloat').innerHTML = '⏹️';
-        showToast('🔴 Listening... speak now', '#c62828');
-    };
-
-    rf.onresult = (e) => {
-        let final = '', interim = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-            if (e.results[i].isFinal) final += e.results[i][0].transcript;
-            else interim += e.results[i][0].transcript;
-        }
-        if (interim) showToast('🗣️ ' + interim, '#1565c0');
-        if (final) {
-            showToast('✅ Sending: ' + final, '#00695c');
-            sendVoiceToChat(final.trim());
+let r=null,on=false;
+function init(){
+    const S=window.SpeechRecognition||window.webkitSpeechRecognition;
+    if(!S){document.getElementById('inf').textContent='Not supported - use Chrome';return false;}
+    r=new S();r.continuous=false;r.interimResults=true;r.lang='en-US';
+    r.onstart=()=>{on=true;document.getElementById('mb').classList.add('on');document.getElementById('mb').textContent='⏹';document.getElementById('inf').textContent='Listening...';};
+    r.onresult=(e)=>{
+        let f='',i='';
+        for(let x=e.resultIndex;x<e.results.length;x++){if(e.results[x].isFinal)f+=e.results[x][0].transcript;else i+=e.results[x][0].transcript;}
+        const show=f||i;
+        document.getElementById('res').style.display='block';
+        document.getElementById('res').textContent='🗣 '+show;
+        if(f){
+            document.getElementById('inf').textContent='Sending...';
+            window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:f.trim()},'*');
         }
     };
-
-    rf.onend = () => {
-        lf = false;
-        document.getElementById('micFloat').classList.remove('listening');
-        document.getElementById('micFloat').innerHTML = '🎤';
-    };
-
-    rf.onerror = (e) => {
-        lf = false;
-        document.getElementById('micFloat').classList.remove('listening');
-        document.getElementById('micFloat').innerHTML = '🎤';
-        let msg = 'Error: ' + e.error;
-        if (e.error === 'not-allowed') msg = '❌ Allow microphone in browser settings';
-        showToast(msg, '#c62828');
-    };
+    r.onend=()=>{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';setTimeout(()=>{document.getElementById('inf').textContent='Click mic to speak';},1500);};
+    r.onerror=(e)=>{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';document.getElementById('inf').textContent=e.error==='not-allowed'?'Allow mic in browser':('Error: '+e.error);};
     return true;
 }
-
-function sendVoiceToChat(text) {
-    // Try to fill the Streamlit chat input and submit
-    const trySubmit = (attempt) => {
-        const inputs = document.querySelectorAll('textarea');
-        let chatInput = null;
-        inputs.forEach(inp => {
-            if (inp.placeholder && inp.placeholder.includes('message')) chatInput = inp;
-        });
-        
-        if (chatInput) {
-            const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
-            nativeSetter.call(chatInput, text);
-            chatInput.dispatchEvent(new Event('input', { bubbles: true }));
-            chatInput.dispatchEvent(new Event('change', { bubbles: true }));
-            
-            setTimeout(() => {
-                // Find and click submit button
-                const btns = document.querySelectorAll('button');
-                btns.forEach(btn => {
-                    if (btn.getAttribute('data-testid') === 'baseButton-secondary' || 
-                        btn.closest('[data-testid="stChatInput"]')) {
-                        btn.click();
-                    }
-                });
-                
-                // Also try pressing Enter
-                chatInput.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Enter', keyCode: 13, bubbles: true, cancelable: true
-                }));
-            }, 300);
-        } else if (attempt < 5) {
-            setTimeout(() => trySubmit(attempt + 1), 500);
-        }
-    };
-    trySubmit(0);
-}
-
-function speakResponse(text) {
-    if (synthF && text) {
-        synthF.cancel();
-        const u = new SpeechSynthesisUtterance(text);
-        u.rate = 1.0; u.pitch = 1.0; u.volume = 1.0;
-        const voices = synthF.getVoices();
-        const best = voices.find(v => 
-            v.name.includes('Samantha') || 
-            v.name.includes('Google US English') ||
-            v.name.includes('Microsoft Zira') ||
-            (v.lang === 'en-US' && v.localService)
-        );
-        if (best) u.voice = best;
-        synthF.speak(u);
-    }
-}
-
-function toggleMicFloat() {
-    if (!rf && !initMicFloat()) return;
-    if (lf) { rf.stop(); } else { rf.start(); }
-}
-
-// Watch for new AI responses and speak them
-function watchAndSpeak() {
-    let lastText = '';
-    const obs = new MutationObserver(() => {
-        const msgs = document.querySelectorAll('[data-testid="stChatMessage"]');
-        if (msgs.length > 0) {
-            const last = msgs[msgs.length - 1];
-            const isAssistant = last.querySelector('[data-testid="chatAvatarIcon-assistant"]');
-            if (isAssistant) {
-                const p = last.querySelector('p, .stMarkdown p');
-                if (p && p.textContent && p.textContent !== lastText) {
-                    lastText = p.textContent;
-                    setTimeout(() => speakResponse(lastText), 500);
-                }
-            }
-        }
-    });
-    const container = document.body;
-    if (container) obs.observe(container, { childList: true, subtree: true });
-}
-
-window.addEventListener('load', () => {
-    initMicFloat();
-    setTimeout(watchAndSpeak, 2000);
-    // Load voices
-    if (synthF) synthF.getVoices();
-    synthF && synthF.addEventListener && synthF.addEventListener('voiceschanged', () => synthF.getVoices());
-});
+function go(){if(!r&&!init())return;on?r.stop():r.start();}
 </script>
-""", unsafe_allow_html=True)
+</body>
+</html>
+"""
+
+voice_result = components.html(voice_html, height=80)
+
+# If voice result received, use it as input
+if voice_result and isinstance(voice_result, str) and voice_result.strip():
+    st.session_state.voice_text = voice_result.strip()
 
 user_input = st.chat_input("Type your message here... 💬")
 
-# Check for voice input
-if not user_input and st.session_state.get("voice_input"):
-    user_input = st.session_state.pop("voice_input")
+# Use voice input if available
+if not user_input and st.session_state.voice_text:
+    user_input = st.session_state.voice_text
+    st.session_state.voice_text = ""
 if not user_input and st.session_state.get("trigger_response"):
     user_input = st.session_state.pop("trigger_response")
 
