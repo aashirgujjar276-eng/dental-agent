@@ -56,34 +56,6 @@ html, body, [data-testid="stAppViewContainer"] { background: #f7fafc; font-famil
 .receipt p { color: #333; margin: 4px 0; font-size: 0.85rem; }
 footer { visibility: hidden; }
 #MainMenu { visibility: hidden; }
-
-.voice-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 10px 0;
-    margin-bottom: 8px;
-}
-.voice-btn {
-    width: 52px;
-    height: 52px;
-    border-radius: 50%;
-    background: linear-gradient(135deg, #1565c0, #0a2540);
-    border: none;
-    cursor: pointer;
-    font-size: 22px;
-    transition: all 0.3s;
-    box-shadow: 0 4px 15px rgba(21,101,192,0.4);
-}
-.voice-btn:hover { transform: scale(1.12); box-shadow: 0 6px 20px rgba(21,101,192,0.6); }
-.voice-btn.listening { background: linear-gradient(135deg,#c62828,#b71c1c); animation: pulse 1s infinite; }
-.voice-status { font-size: 0.85rem; color: #1565c0; font-weight: 500; }
-@keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(198,40,40,0.5); }
-    70% { box-shadow: 0 0 0 12px rgba(198,40,40,0); }
-    100% { box-shadow: 0 0 0 0 rgba(198,40,40,0); }
-}
-
 @media (prefers-color-scheme: dark) {
     [data-testid="stAppViewContainer"] { background: #1a1a2e !important; }
     .main-header { background: linear-gradient(135deg, #0a2540 0%, #1565c0 100%) !important; }
@@ -658,91 +630,7 @@ Thank you for letting us know.
         key="cancel_receipt_dl"
     )
 
-
-# Voice input - fixed version with dedup + fresh component identity
-import streamlit.components.v1 as components
-
-if "voice_text" not in st.session_state:
-    st.session_state.voice_text = ""
-if "last_voice_result" not in st.session_state:
-    st.session_state.last_voice_result = ""
-if "voice_nonce" not in st.session_state:
-    st.session_state.voice_nonce = 0
-
-voice_html = f"""
-<!-- nonce:{st.session_state.voice_nonce} -->
-<!DOCTYPE html>
-<html>
-<head>
-<style>
-* {{ margin:0; padding:0; box-sizing:border-box; }}
-body {{ background:transparent; font-family:Inter,sans-serif; }}
-.wrap {{ display:flex; align-items:center; gap:10px; padding:6px 0; }}
-.mbtn {{
-    width:44px; height:44px; border-radius:50%;
-    background:linear-gradient(135deg,#1565c0,#0a2540);
-    border:2px solid rgba(255,255,255,0.2); cursor:pointer;
-    font-size:20px; color:white; transition:all 0.2s; flex-shrink:0;
-}}
-.mbtn:hover {{ transform:scale(1.08); }}
-.mbtn.on {{ background:linear-gradient(135deg,#c62828,#b71c1c); animation:p 1s infinite; }}
-.info {{ font-size:0.82rem; color:#1565c0; font-weight:500; }}
-.sub {{ font-size:0.72rem; color:#888; margin-top:2px; }}
-.result {{ margin-top:6px; padding:8px 12px; background:#e8f0fe; border-radius:8px; border:1px solid #c5d8fb; font-size:0.88rem; color:#0a2540; display:none; }}
-@keyframes p{{0%{{box-shadow:0 0 0 0 rgba(198,40,40,0.5)}}70%{{box-shadow:0 0 0 10px rgba(198,40,40,0)}}100%{{box-shadow:0 0 0 0 rgba(198,40,40,0)}}}}
-</style>
-</head>
-<body>
-<div class="wrap">
-    <button class="mbtn" id="mb" onclick="go()">🎤</button>
-    <div>
-        <div class="info" id="inf">Click mic to speak</div>
-        <div class="sub">Chrome recommended</div>
-    </div>
-</div>
-<div class="result" id="res"></div>
-<script>
-let r=null,on=false;
-function init(){{
-    const S=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!S){{document.getElementById('inf').textContent='Not supported - use Chrome';return false;}}
-    r=new S();r.continuous=false;r.interimResults=true;r.lang='en-US';
-    r.onstart=()=>{{on=true;document.getElementById('mb').classList.add('on');document.getElementById('mb').textContent='⏹';document.getElementById('inf').textContent='Listening...';}};
-    r.onresult=(e)=>{{
-        let f='',i='';
-        for(let x=e.resultIndex;x<e.results.length;x++){{if(e.results[x].isFinal)f+=e.results[x][0].transcript;else i+=e.results[x][0].transcript;}}
-        const show=f||i;
-        document.getElementById('res').style.display='block';
-        document.getElementById('res').textContent='🗣 '+show;
-        if(f){{
-            document.getElementById('inf').textContent='Sending...';
-            window.parent.postMessage({{isStreamlitMessage:true,type:'streamlit:setComponentValue',value:f.trim()}},'*');
-        }}
-    }};
-    r.onend=()=>{{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';setTimeout(()=>{{document.getElementById('inf').textContent='Click mic to speak';}},1500);}};
-    r.onerror=(e)=>{{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';document.getElementById('inf').textContent=e.error==='not-allowed'?'Allow mic in browser':('Error: '+e.error);}};
-    return true;
-}}
-function go(){{if(!r&&!init())return;on?r.stop():r.start();}}
-</script>
-</body>
-</html>
-"""
-
-voice_result = components.html(voice_html, height=80)
-
-if voice_result and isinstance(voice_result, str) and voice_result.strip():
-    cleaned = voice_result.strip()
-    if cleaned != st.session_state.last_voice_result:
-        st.session_state.last_voice_result = cleaned
-        st.session_state.voice_text = cleaned
-        st.session_state.voice_nonce += 1  # force fresh component next run
-
 user_input = st.chat_input("Type your message here... 💬")
-
-if not user_input and st.session_state.voice_text:
-    user_input = st.session_state.voice_text
-    st.session_state.voice_text = ""
 if not user_input and st.session_state.get("trigger_response"):
     user_input = st.session_state.pop("trigger_response")
 
