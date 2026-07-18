@@ -659,53 +659,37 @@ Thank you for letting us know.
     )
 
 
-# Voice input - simple and reliable approach
+# Voice input - fixed version with dedup + fresh component identity
 import streamlit.components.v1 as components
 
-# Initialize voice state
 if "voice_text" not in st.session_state:
     st.session_state.voice_text = ""
+if "last_voice_result" not in st.session_state:
+    st.session_state.last_voice_result = ""
+if "voice_nonce" not in st.session_state:
+    st.session_state.voice_nonce = 0
 
-# Voice component
-voice_html = """
+voice_html = f"""
+<!-- nonce:{st.session_state.voice_nonce} -->
 <!DOCTYPE html>
 <html>
 <head>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-body { background:transparent; font-family:Inter,sans-serif; }
-.wrap {
-    display:flex;
-    align-items:center;
-    gap:10px;
-    padding:6px 0;
-}
-.mbtn {
-    width:44px; height:44px;
-    border-radius:50%;
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ background:transparent; font-family:Inter,sans-serif; }}
+.wrap {{ display:flex; align-items:center; gap:10px; padding:6px 0; }}
+.mbtn {{
+    width:44px; height:44px; border-radius:50%;
     background:linear-gradient(135deg,#1565c0,#0a2540);
-    border:2px solid rgba(255,255,255,0.2);
-    cursor:pointer;
-    font-size:20px;
-    color:white;
-    transition:all 0.2s;
-    flex-shrink:0;
-}
-.mbtn:hover { transform:scale(1.08); }
-.mbtn.on { background:linear-gradient(135deg,#c62828,#b71c1c); animation:p 1s infinite; }
-.info { font-size:0.82rem; color:#1565c0; font-weight:500; }
-.sub { font-size:0.72rem; color:#888; margin-top:2px; }
-.result {
-    margin-top:6px;
-    padding:8px 12px;
-    background:#e8f0fe;
-    border-radius:8px;
-    border:1px solid #c5d8fb;
-    font-size:0.88rem;
-    color:#0a2540;
-    display:none;
-}
-@keyframes p{0%{box-shadow:0 0 0 0 rgba(198,40,40,0.5)}70%{box-shadow:0 0 0 10px rgba(198,40,40,0)}100%{box-shadow:0 0 0 0 rgba(198,40,40,0)}}
+    border:2px solid rgba(255,255,255,0.2); cursor:pointer;
+    font-size:20px; color:white; transition:all 0.2s; flex-shrink:0;
+}}
+.mbtn:hover {{ transform:scale(1.08); }}
+.mbtn.on {{ background:linear-gradient(135deg,#c62828,#b71c1c); animation:p 1s infinite; }}
+.info {{ font-size:0.82rem; color:#1565c0; font-weight:500; }}
+.sub {{ font-size:0.72rem; color:#888; margin-top:2px; }}
+.result {{ margin-top:6px; padding:8px 12px; background:#e8f0fe; border-radius:8px; border:1px solid #c5d8fb; font-size:0.88rem; color:#0a2540; display:none; }}
+@keyframes p{{0%{{box-shadow:0 0 0 0 rgba(198,40,40,0.5)}}70%{{box-shadow:0 0 0 10px rgba(198,40,40,0)}}100%{{box-shadow:0 0 0 0 rgba(198,40,40,0)}}}}
 </style>
 </head>
 <body>
@@ -717,30 +701,29 @@ body { background:transparent; font-family:Inter,sans-serif; }
     </div>
 </div>
 <div class="result" id="res"></div>
-
 <script>
 let r=null,on=false;
-function init(){
+function init(){{
     const S=window.SpeechRecognition||window.webkitSpeechRecognition;
-    if(!S){document.getElementById('inf').textContent='Not supported - use Chrome';return false;}
+    if(!S){{document.getElementById('inf').textContent='Not supported - use Chrome';return false;}}
     r=new S();r.continuous=false;r.interimResults=true;r.lang='en-US';
-    r.onstart=()=>{on=true;document.getElementById('mb').classList.add('on');document.getElementById('mb').textContent='⏹';document.getElementById('inf').textContent='Listening...';};
-    r.onresult=(e)=>{
+    r.onstart=()=>{{on=true;document.getElementById('mb').classList.add('on');document.getElementById('mb').textContent='⏹';document.getElementById('inf').textContent='Listening...';}};
+    r.onresult=(e)=>{{
         let f='',i='';
-        for(let x=e.resultIndex;x<e.results.length;x++){if(e.results[x].isFinal)f+=e.results[x][0].transcript;else i+=e.results[x][0].transcript;}
+        for(let x=e.resultIndex;x<e.results.length;x++){{if(e.results[x].isFinal)f+=e.results[x][0].transcript;else i+=e.results[x][0].transcript;}}
         const show=f||i;
         document.getElementById('res').style.display='block';
         document.getElementById('res').textContent='🗣 '+show;
-        if(f){
+        if(f){{
             document.getElementById('inf').textContent='Sending...';
-            window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:f.trim()},'*');
-        }
-    };
-    r.onend=()=>{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';setTimeout(()=>{document.getElementById('inf').textContent='Click mic to speak';},1500);};
-    r.onerror=(e)=>{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';document.getElementById('inf').textContent=e.error==='not-allowed'?'Allow mic in browser':('Error: '+e.error);};
+            window.parent.postMessage({{isStreamlitMessage:true,type:'streamlit:setComponentValue',value:f.trim()}},'*');
+        }}
+    }};
+    r.onend=()=>{{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';setTimeout(()=>{{document.getElementById('inf').textContent='Click mic to speak';}},1500);}};
+    r.onerror=(e)=>{{on=false;document.getElementById('mb').classList.remove('on');document.getElementById('mb').textContent='🎤';document.getElementById('inf').textContent=e.error==='not-allowed'?'Allow mic in browser':('Error: '+e.error);}};
     return true;
-}
-function go(){if(!r&&!init())return;on?r.stop():r.start();}
+}}
+function go(){{if(!r&&!init())return;on?r.stop():r.start();}}
 </script>
 </body>
 </html>
@@ -748,13 +731,15 @@ function go(){if(!r&&!init())return;on?r.stop():r.start();}
 
 voice_result = components.html(voice_html, height=80)
 
-# If voice result received, use it as input
 if voice_result and isinstance(voice_result, str) and voice_result.strip():
-    st.session_state.voice_text = voice_result.strip()
+    cleaned = voice_result.strip()
+    if cleaned != st.session_state.last_voice_result:
+        st.session_state.last_voice_result = cleaned
+        st.session_state.voice_text = cleaned
+        st.session_state.voice_nonce += 1  # force fresh component next run
 
 user_input = st.chat_input("Type your message here... 💬")
 
-# Use voice input if available
 if not user_input and st.session_state.voice_text:
     user_input = st.session_state.voice_text
     st.session_state.voice_text = ""
